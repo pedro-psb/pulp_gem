@@ -13,3 +13,5 @@ sphinxcontrib-openapi
 towncrier
 mistune<4.0.0
 Jinja2<3.2
+# Unified docs
+pulp-docs @ git+https://github.com/pulp/pulp-docs@main

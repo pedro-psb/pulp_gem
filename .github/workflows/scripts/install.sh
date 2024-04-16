@@ -16,7 +16,7 @@ set -euv
 source .github/workflows/scripts/utils.sh
 
 PLUGIN_VERSION="$(sed -n -e 's/^\s*current_version\s*=\s*//p' .bumpversion.cfg | python -c 'from packaging.version import Version; print(Version(input()))')"
-PLUGIN_NAME="./pulp_gem/dist/pulp_gem-${PLUGIN_VERSION}-py3-none-any.whl"
+PLUGIN_SOURCE="./pulp_gem/dist/pulp_gem-${PLUGIN_VERSION}-py3-none-any.whl"
 
 export PULP_API_ROOT="/pulp/"
 
@@ -35,7 +35,6 @@ then
 fi
 
 cd .ci/ansible/
-PLUGIN_SOURCE="${PLUGIN_NAME}"
 if [ "$TEST" = "s3" ]; then
   PLUGIN_SOURCE="${PLUGIN_SOURCE} pulpcore[s3]"
 fi
@@ -80,9 +79,7 @@ cat >> vars/main.yaml << VARSYAML
 pulp_env: {}
 pulp_settings: null
 pulp_scheme: https
-
-pulp_container_tag: "latest"
-
+pulp_default_container: ghcr.io/pulp/pulp-ci-centos9:latest
 VARSYAML
 
 if [ "$TEST" = "s3" ]; then
@@ -129,7 +126,7 @@ if [ "${PULP_API_ROOT:-}" ]; then
   sed -i -e '$a api_root: "'"$PULP_API_ROOT"'"' vars/main.yaml
 fi
 
-pulp config create --base-url https://pulp --api-root "$PULP_API_ROOT"
+pulp config create --base-url https://pulp --api-root "$PULP_API_ROOT" --username "admin" --password "password"
 if [[ "$TEST" != "docs" ]]; then
   cp ~/.config/pulp/cli.toml "${REPO_ROOT}/../pulp-cli-gem/tests/cli.toml"
 fi
@@ -164,10 +161,17 @@ cat "$CERTIFI" | sudo tee -a "$CERT" > /dev/null
 sudo update-ca-certificates
 echo ::endgroup::
 
+# Add our azcert.crt certificate to the container image along with the certificates from certifi
+# so that we can use HTTPS with our fake Azure CI. certifi is self-contained and doesn't allow
+# extension or modification of the trust store, so we do a weird and hacky thing (above) where we just
+# overwrite or append to certifi's trust store behind it's back.
+#
+# We do this for both the CI host and the CI image.
 if [[ "$TEST" = "azure" ]]; then
   AZCERTIFI=$(/opt/az/bin/python3 -c 'import certifi; print(certifi.where())')
+  PULPCERTIFI=$(cmd_prefix python3 -c 'import certifi; print(certifi.where())')
   cat /usr/local/share/ca-certificates/azcert.crt >> $AZCERTIFI
-  cat /usr/local/share/ca-certificates/azcert.crt | cmd_stdin_prefix tee -a /usr/local/lib/python3.8/site-packages/certifi/cacert.pem > /dev/null
+  cat /usr/local/share/ca-certificates/azcert.crt | cmd_stdin_prefix tee -a "$PULPCERTIFI" > /dev/null
   cat /usr/local/share/ca-certificates/azcert.crt | cmd_stdin_prefix tee -a /etc/pki/tls/cert.pem > /dev/null
   AZURE_STORAGE_CONNECTION_STRING='DefaultEndpointsProtocol=https;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=https://ci-azurite:10000/devstoreaccount1;'
   az storage container create --name pulp-test --connection-string $AZURE_STORAGE_CONNECTION_STRING
